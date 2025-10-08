@@ -1,0 +1,102 @@
+Needs["NumericalDifferentialEquationAnalysis`"];
+
+(*Función auxiliar para reconstrucción silenciosa*)
+reconstruirBetaSilent[metodo_, Nmomentos_, alpha_, beta_, nPuntos_] :=
+  Module[{psi, phiOriginal, x, w, potenciaSegura, mu, A, c, 
+   phiRecSinTruncar, phiRec, nIntervals, puntosPesos, h, derivada2, 
+   derivada4, errorEst, puntosPesosMenos, xMenos, wMenos, muMenos, 
+   cMenos, phiRecMenosSinTruncar, phiRecMenos, fineX, originalFine, 
+   recFine, errorFine, maxError, rmse, puntosMuestra, diff}, 
+  psi[i_, x_] := If[i == 0, 1, x^i];
+  phiOriginal[x_] := PDF[BetaDistribution[alpha, beta], x];
+  potenciaSegura[lista_, k_] := 
+   Table[If[k == 0, 1, If[lista[[i]] == 0, 0, lista[[i]]^k]], {i, 
+     Length[lista]}];
+  Which[metodo == "Trapecio", h = 1.0/nPuntos;
+   x = Range[0, 1, h];
+   w = ConstantArray[h, Length[x]];
+   w[[1]] = h/2; w[[-1]] = h/2, metodo == "Simpson", 
+   nIntervals = If[EvenQ[nPuntos], nPuntos, nPuntos + 1];
+   h = 1.0/nIntervals;
+   x = Table[i*h, {i, 0, nIntervals}];
+   w = Table[
+     Which[i == 0 || i == nIntervals, h/3, OddQ[i], 4*h/3, EvenQ[i], 
+      2*h/3], {i, 0, nIntervals}], metodo == "Gauss", 
+   puntosPesos = GaussianQuadratureWeights[nPuntos, 0, 1];
+   {x, w} = Transpose[puntosPesos]];
+  mu = Table[
+    w . (phiOriginal[x]*potenciaSegura[x, n - 1]), {n, 1, 
+     Nmomentos}];
+  A = Table[
+    w . potenciaSegura[x, j + n - 1], {n, 1, Nmomentos}, {j, 0, 
+     Nmomentos - 1}];
+  c = LeastSquares[A, mu];
+  phiRecSinTruncar[x_] := 
+   Sum[c[[i + 1]]*psi[i, x], {i, 0, Nmomentos - 1}];
+  phiRec[x_] := Max[0, phiRecSinTruncar[x]];
+  fineX = Range[0, 1, 0.01];
+  originalFine = phiOriginal /@ fineX;
+  recFine = phiRec /@ fineX;
+  errorFine = Abs[recFine - originalFine];
+  maxError = Max[errorFine];
+  rmse = Sqrt[Mean[errorFine^2]];
+  <|"PhiOriginal" -> phiOriginal, "PhiRec" -> phiRec, 
+   "Puntos" -> fineX, "Errores" -> errorFine, "MaxError" -> maxError, 
+   "RMSE" -> rmse|>]
+
+(*Función principal modificada*)
+analizarPrecisionPorMomentos[metodo_, alpha_, beta_, nPuntos_, 
+  momentoInicial_, momentoFinal_] := 
+ Module[{rangomomentos, resultados, original, fineX, erroresMaximos, 
+   rmses, colores, plotReconstrucciones, plotErrores, 
+   plotEvolucionError}, 
+  rangomomentos = rangomomentos = {1, 3, 5, 8, 10};
+  resultados = 
+   Table[reconstruirBetaSilent[metodo, n, alpha, beta, nPuntos], {n, 
+     rangomomentos}];
+  original = resultados[[1]]["PhiOriginal"];
+  fineX = resultados[[1]]["Puntos"];
+  (*Configurar colores distintos para cada curva*)
+  colores = ColorData[97] /@ Range[Length[rangomomentos]];
+  (*Gráfico de reconstrucciones superpuestas*)
+  plotReconstrucciones = 
+   Plot[Evaluate[
+     Join[{original[x]}, 
+      Table[resultados[[i]]["PhiRec"][x], {i, 
+        Length[rangomomentos]}]]], {x, 0, 1}, 
+    PlotStyle -> 
+     Join[{Directive[Gray, Dashed, Thickness[0.01]]}, 
+      Directive[#, Thickness[0.005]] & /@ colores], 
+    PlotLegends -> 
+     Join[{"Original"}, 
+      Table[ToString[rangomomentos[[i]]] <> "\[Mu]", {i, 
+        Length[rangomomentos]}]], AxesLabel -> {"x", "\[Phi](x)"}, 
+    GridLines -> None, ImageSize -> 600, PlotLabel -> ""];
+  (*Gráfico de errores superpuestos*)
+  plotErrores = 
+   ListLinePlot[
+    Table[Transpose[{fineX, resultados[[i]]["Errores"]}], {i, 
+      Length[rangomomentos]}], PlotStyle -> colores, 
+    PlotLegends -> 
+     Table[ToString[rangomomentos[[i]]] <> "\[Mu]", {i, 
+       Length[rangomomentos]}], AxesLabel -> {"x", "Error"}, 
+    GridLines -> None, ImageSize -> 600, PlotLabel -> ""];
+  (*Gráfica de evolución de errores*)
+  erroresMaximos = resultados[[All, "MaxError"]];
+  rmses = resultados[[All, "RMSE"]];
+  plotEvolucionError = 
+   ListLogPlot[{Transpose[{rangomomentos, erroresMaximos}], 
+     Transpose[{rangomomentos, rmses}]}, 
+    PlotLegends -> {"Error Máximo", "RMSE"}, 
+    AxesLabel -> {"Número de Momentos", "Error"}, GridLines -> None, 
+    ImageSize -> 600, PlotLabel -> "Evolución de Errores", 
+    Joined -> True, PlotMarkers -> Automatic];
+  (*Mostrar todos los gráficos*)
+  Print[Grid[{{plotReconstrucciones}, {plotErrores}, \
+{plotEvolucionError}}]];
+  (*Tabla de precisión*)Print["\nTabla de mejora de precisión:"];
+  Print[Grid[
+    Prepend[Transpose[{rangomomentos, erroresMaximos, 
+       rmses}], {"# Momentos", "Error Máximo", "RMSE"}], Frame -> All,
+     Alignment -> {Center, Center}, 
+    Background -> {None, {LightBlue, None}}]]]
