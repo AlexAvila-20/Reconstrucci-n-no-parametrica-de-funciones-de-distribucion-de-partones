@@ -1,0 +1,182 @@
+Needs["NumericalDifferentialEquationAnalysis`"];
+
+reconstruirBetaConError[metodo_, Nmomentos_, alpha_, beta_, nPuntos_, 
+  silent_ : False] := 
+ Module[{psi, phiOriginal, x, w, potenciaSegura, mu, A, c, 
+   phiRecSinTruncar, phiRec, nIntervals, puntosPesos, xQuad, wQuad, h,
+    derivada2, derivada4, errorEst, puntosPesosMenos, xMenos, wMenos, 
+   muMenos, cMenos, phiRecMenosSinTruncar, phiRecMenos, fineX, 
+   originalFine, recFine, errorFine, maxError, rmse, selectedX, 
+   tableData, plotError, plots, errorData, puntosMuestra, diff}, 
+  psi[i_, x_] := If[i == 0, 1, x^i];
+  phiOriginal[x_] := PDF[BetaDistribution[alpha, beta], x];
+  potenciaSegura[lista_, k_] := 
+   Table[If[k == 0, 1, If[lista[[i]] == 0, 0, lista[[i]]^k]], {i, 
+     Length[lista]}];
+  Which[metodo == "Trapecio", h = 1.0/nPuntos;
+   x = Range[0, 1, h];
+   w = ConstantArray[h, Length[x]];
+   w[[1]] = h/2; w[[-1]] = h/2, metodo == "Simpson", 
+   nIntervals = If[EvenQ[nPuntos], nPuntos, nPuntos + 1];
+   h = 1.0/nIntervals;
+   x = Table[i*h, {i, 0, nIntervals}];
+   w = Table[
+     Which[i == 0 || i == nIntervals, h/3, OddQ[i], 4*h/3, EvenQ[i], 
+      2*h/3], {i, 0, nIntervals}], metodo == "Gauss", 
+   puntosPesos = GaussianQuadratureWeights[nPuntos, 0, 1];
+   {x, w} = Transpose[puntosPesos]];
+  mu = Table[
+    w . (phiOriginal[x]*potenciaSegura[x, n - 1]), {n, 1, 
+     Nmomentos}];
+  A = Table[
+    w . potenciaSegura[x, j + n - 1], {n, 1, Nmomentos}, {j, 0, 
+     Nmomentos - 1}];
+  c = LeastSquares[A, mu];
+  phiRecSinTruncar[x_] := 
+   Sum[c[[i + 1]]*psi[i, x], {i, 0, Nmomentos - 1}];
+  phiRec[x_] := Max[0, phiRecSinTruncar[x]];
+  errorEst = 
+   Which[metodo == "Trapecio", 
+    derivada2 = {(-3 phiRecSinTruncar[0] + 4 phiRecSinTruncar[h] - 
+         phiRecSinTruncar[2 h])/(2 h), (3 phiRecSinTruncar[1] - 
+         4 phiRecSinTruncar[1 - h] + phiRecSinTruncar[1 - 2 h])/(2 h)};
+    Abs[h^2/12 (derivada2[[2]] - derivada2[[1]])], 
+    metodo == "Simpson", 
+    derivada4 = {(-14 phiRecSinTruncar[0] + 72 phiRecSinTruncar[h] - 
+         156 phiRecSinTruncar[2 h] + 168 phiRecSinTruncar[3 h] - 
+         70 phiRecSinTruncar[4 h])/(24 h^3), (14 phiRecSinTruncar[
+           1] - 72 phiRecSinTruncar[1 - h] + 
+         156 phiRecSinTruncar[1 - 2 h] - 
+         168 phiRecSinTruncar[1 - 3 h] + 
+         70 phiRecSinTruncar[1 - 4 h])/(24 h^3)};
+    Abs[h^4/180 (derivada4[[2]] - derivada4[[1]])], metodo == "Gauss",
+     If[nPuntos > 1, 
+     puntosPesosMenos = GaussianQuadratureWeights[nPuntos - 1, 0, 1];
+     {xMenos, wMenos} = Transpose[puntosPesosMenos];
+     muMenos = 
+      Table[wMenos . (phiOriginal[xMenos]*
+          potenciaSegura[xMenos, n - 1]), {n, 1, Nmomentos}];
+     A = 
+      Table[wMenos . potenciaSegura[xMenos, j + n - 1], {n, 1, 
+        Nmomentos}, {j, 0, Nmomentos - 1}];
+     cMenos = LeastSquares[A, muMenos];
+     phiRecMenosSinTruncar[x_] := 
+      Sum[cMenos[[i + 1]]*psi[i, x], {i, 0, Nmomentos - 1}];
+     phiRecMenos[x_] := Max[0, phiRecMenosSinTruncar[x]];
+     puntosMuestra = Range[0, 1, 0.01];
+     diff = 
+      Abs[phiRecSinTruncar[#] - phiRecMenosSinTruncar[#]] & /@ 
+       puntosMuestra;
+     Max[diff], 0], _, 0];
+  fineX = Range[0, 1, 0.01];
+  originalFine = phiOriginal /@ fineX;
+  recFine = phiRec /@ fineX;
+  errorFine = Abs[recFine - originalFine];
+  maxError = Max[errorFine];
+  rmse = Sqrt[Mean[errorFine^2]];
+  If[! silent, selectedX = Range[0, 1, 0.1];
+   tableData = 
+    Table[{x, phiOriginal[x], phiRec[x], 
+      Abs[phiOriginal[x] - phiRec[x]]}, {x, selectedX}];
+   plots = {Plot[{phiOriginal[x], phiRec[x]}, {x, 0, 1}, 
+      PlotStyle -> {Directive[Gray, Dashed], Directive[Blue, Thick]}, 
+      PlotLegends -> {"\[Phi]", "f(x)"}, 
+      AxesLabel -> {"x", "\[Phi](x)"}, GridLines -> None, 
+      ImageSize -> 300,(*Modificación:
+      números de ejes en negrita y más grandes*)
+      LabelStyle -> {FontSize -> 12, FontWeight -> "Bold"}, 
+      AxesStyle -> {FontSize -> 11, FontWeight -> "Bold"}], 
+     ListLinePlot[Transpose[{fineX, errorFine}], 
+      AxesLabel -> {"x", "Error"}, GridLines -> None, 
+      ImageSize -> 300,(*Modificación:
+      números de ejes en negrita y más grandes*)
+      LabelStyle -> {FontSize -> 12, FontWeight -> "Bold"}, 
+      AxesStyle -> {FontSize -> 11, FontWeight -> "Bold"}]};
+   Print[Grid[{plots}, Spacings -> {2, 0}]];
+   Print["Error máximo: ", NumberForm[maxError, 4]];
+   Print["RMSE: ", NumberForm[rmse, 4]];
+   Print["Error de cuadratura estimado: ", NumberForm[errorEst, 4]];
+   Print["\nTabla comparativa en puntos seleccionados:"];
+   Print[
+    Grid[Prepend[
+      tableData, {"x", "Original", "Reconstruida", 
+       "Error |Original - Reconstruida|"}], Frame -> All, 
+     Alignment -> {Center, Center}, 
+     Background -> {None, {LightBlue, None}}]];];
+  <|"PhiOriginal" -> phiOriginal, "PhiRec" -> phiRec, 
+   "Puntos" -> fineX, "Errores" -> errorFine, "MaxError" -> maxError, 
+   "RMSE" -> rmse, "ErrorIntegracion" -> errorEst|>]
+
+analizarPrecisionPorMomentos[metodo_, alpha_, beta_, nPuntos_, 
+  momentoInicial_, momentoFinal_] := 
+ Module[{rangomomentos, resultados, erroresMaximos, rmses, 
+   erroresIntegracion}, 
+  rangomomentos = Range[momentoInicial, momentoFinal];
+  resultados = 
+   Table[reconstruirBetaConError[metodo, n, alpha, beta, nPuntos, 
+     True], {n, rangomomentos}];
+  erroresMaximos = resultados[[All, "MaxError"]];
+  rmses = resultados[[All, "RMSE"]];
+  erroresIntegracion = resultados[[All, "ErrorIntegracion"]];
+  Print[ListLogPlot[{Transpose[{rangomomentos, erroresMaximos}], 
+     Transpose[{rangomomentos, rmses}], 
+     Transpose[{rangomomentos, erroresIntegracion}]}, 
+    PlotLegends -> {"Error Máximo", "RMSE", "Error de Integración"}, 
+    AxesLabel -> {"Número de Momentos", "Error"}, GridLines -> None, 
+    ImageSize -> 600,(*Modificación:
+    números de ejes en negrita y más grandes*)
+    LabelStyle -> {FontSize -> 14, FontWeight -> "Bold"}, 
+    AxesStyle -> {FontSize -> 12, FontWeight -> "Bold"}]];
+  Print["\nTabla de mejora de precisión:"];
+  Grid[Prepend[
+    Transpose[{rangomomentos, erroresMaximos, rmses, 
+      erroresIntegracion}], {"# Momentos", "Error Máximo", "RMSE", 
+     "Error de Integración"}], Frame -> All, 
+   Alignment -> {Center, Center}, 
+   Background -> {None, {LightBlue, None}}]]
+
+obtenerErroresPorMomento[metodo_, alpha_, beta_, nPuntos_, 
+  momentoInicial_, momentoFinal_] := 
+ Module[{rangomomentos, resultados}, 
+  rangomomentos = Range[momentoInicial, momentoFinal];
+  resultados = 
+   Table[reconstruirBetaConError[metodo, n, alpha, beta, nPuntos, 
+     True], {n, rangomomentos}];
+  {rangomomentos, resultados[[All, "MaxError"]], 
+   resultados[[All, "RMSE"]], resultados[[All, "ErrorIntegracion"]]}]
+
+compararMetodos[metodos_, alpha_, beta_, nPuntos_, momentoInicial_, 
+  momentoFinal_] := 
+ Module[{datos, rangomomentos, maxErrors, rmses, intErrors, plots}, 
+  datos = Table[
+    obtenerErroresPorMomento[metodo, alpha, beta, nPuntos, 
+     momentoInicial, momentoFinal], {metodo, metodos}];
+  rangomomentos = Range[momentoInicial, momentoFinal];
+  maxErrors = Transpose[{rangomomentos, #}] & /@ (datos[[All, 2]]);
+  plots1 = 
+   ListLogPlot[maxErrors, PlotLegends -> metodos, 
+    AxesLabel -> {"Número de Momentos", "Error Máximo"}, 
+    GridLines -> None, ImageSize -> 400, PlotMarkers -> Automatic, 
+    PlotRange -> All,(*Modificación:
+    números de ejes en negrita y más grandes*)
+    LabelStyle -> {FontSize -> 12, FontWeight -> "Bold"}, 
+    AxesStyle -> {FontSize -> 11, FontWeight -> "Bold"}];
+  rmses = Transpose[{rangomomentos, #}] & /@ (datos[[All, 3]]);
+  plots2 = 
+   ListLogPlot[rmses, PlotLegends -> metodos, 
+    AxesLabel -> {"Número de Momentos", "RMSE"}, GridLines -> None, 
+    ImageSize -> 400, PlotMarkers -> Automatic, 
+    PlotRange -> All,(*Modificación:
+    números de ejes en negrita y más grandes*)
+    LabelStyle -> {FontSize -> 12, FontWeight -> "Bold"}, 
+    AxesStyle -> {FontSize -> 11, FontWeight -> "Bold"}];
+  intErrors = Transpose[{rangomomentos, #}] & /@ (datos[[All, 4]]);
+  plots3 = 
+   ListLogPlot[intErrors, PlotLegends -> metodos, 
+    AxesLabel -> {"Número de Momentos", "Error de Integración"}, 
+    GridLines -> None, ImageSize -> 400, PlotMarkers -> Automatic, 
+    PlotRange -> All,(*Modificación:
+    números de ejes en negrita y más grandes*)
+    LabelStyle -> {FontSize -> 12, FontWeight -> "Bold"}, 
+    AxesStyle -> {FontSize -> 11, FontWeight -> "Bold"}];
+  Print[Grid[{{plots1, plots2, plots3}}]]; datos]
